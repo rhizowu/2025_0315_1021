@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="jp">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<link rel="stylesheet" href="../app.css">
+<link rel="stylesheet" href="https://use.typekit.net/rrl3lhx.css">
+<link rel="icon" href="../favicon.png" type="image/png">
+<title>2025_0315_1021_tenomaee_DTSP</title>
+<style>
+</style>
+</head>
+<body>
+  <canvas id="gird-canvas"></canvas>
+  <div id="webgl"></div>
+  <% var myData = {date:'2025_0315_1021', up:'2025_1012', map:'https://earth.google.com/web/@35.7932654,139.6628868,4.13846483a,1000.09036716d,30.00000003y,0h,0t,0r/data=CgRCAggBMigKJgokCiAxWFEyTGczaXBvX0ZBLXJyVEVNQkNRLTVUQi00THpwRSACOgMKATJCAggASggIgsfS8wMQAQ?authuser=2', tag:'<a href="https://dtsp.site/tag/tooth-area">#歯型圏</a>', other:'TBC'}; %>
+  <%- include assets/control.ejs {myData} %>
+</body>
+<script id="v-shader" type="x-shader/x-vertex">
+  varying vec2 vUv;
+
+  void main() {
+    vUv = uv;
+    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+  }
+</script>
+
+<script id="f-shader" type="x-shader/x-fragment">
+precision mediump float;
+
+uniform sampler2D uTexture;
+uniform float u_effectMix;     
+uniform float u_grainStrength; 
+uniform float u_brightness;    
+uniform float u_vignette;      
+
+varying vec2 vUv;
+
+float random(vec2 st) {
+    return fract(sin(dot(st.xy, vec2(12.9898,78.233))) * 43758.5453123);
+}
+
+void main() {
+    vec4 texel = texture2D(uTexture, vUv);
+
+    // --- 1. 色収差 (RGB Shift) ---
+    float shift = 0.0020 * u_effectMix;
+    float r = texture2D(uTexture, vUv + vec2(shift, 0.0)).r;
+    float g = texel.g;
+    float b = texture2D(uTexture, vUv - vec2(shift, 0.0)).b;
+    vec3 color = vec3(r, g, b);
+
+    // --- 2. フィルムライクな階調 (光度上げ & シャドウ持ち上げ) ---
+    // 全体的なベース光度を上げる
+    vec3 filmColor = color * (u_brightness + 0.0001); 
+    
+    // シャドウの持ち上げ：pow(color, 0.7) で暗い部分をぐっと明るく補正
+    // これにより、真っ黒な部分がグレー寄りの柔らかい質感になります
+    filmColor = pow(filmColor, vec3(0.8)); 
+
+    // 彩度の低下 (少し褪せた透明感)
+    float luma = dot(filmColor, vec3(0.299, 0.587, 0.114));
+    filmColor = mix(filmColor, vec3(luma), 0.88 * u_effectMix);
+
+    // カラーグレーディング (FUJIフィルム的な清潔感)
+    filmColor.g *= 1.01;
+    filmColor.b = mix(filmColor.b * 1.02, filmColor.b, luma); // 暗部にわずかな青
+
+// --- 3. ハイライトの滲み (ソフトフォーカス / ハレーション) ---
+    float blurSize = 0.0008 * u_effectMix; // ぼかし範囲を少し広げる
+    
+    // 周囲をサンプリングして「光の溜まり」を作る
+    vec3 bloomSample = texture2D(uTexture, vUv + vec2(blurSize, 0.0)).rgb;
+    bloomSample += texture2D(uTexture, vUv + vec2(-blurSize, 0.0)).rgb;
+    bloomSample += texture2D(uTexture, vUv + vec2(0.0, blurSize)).rgb;
+    bloomSample += texture2D(uTexture, vUv + vec2(0.0, -blurSize)).rgb;
+    bloomSample /= 4.0;
+
+    // 閾値を 0.65 -> 0.4 に下げ、より広い範囲の光を拾うように変更
+    // 指数を 3.0 -> 2.0 に下げて、にじみを滑らかにする
+    float bloomWeight = pow(max(0.0, dot(bloomSample, vec3(0.299, 0.587, 0.114)) - 0.4), 2.0);
+    
+    // フィルムらしい暖色系の光を、強めに加算(+=)する
+    vec3 highlightBloom = vec3(1.0, 0.95, 0.9) * bloomWeight * 0.8; 
+    filmColor += highlightBloom * u_effectMix;
+    
+    // --- 4. 粒子とビネット ---
+    float n = random(vUv + fract(u_effectMix));
+    filmColor += (n - 0.5) * 0.06 * u_grainStrength;
+
+    float dist = length(vUv - 0.5);
+    float vignetting = smoothstep(0.95, 0.5, dist);
+    filmColor *= mix(1.0, vignetting, u_vignette * 0.25);
+
+    // --- 最終合成 ---
+    vec3 finalColor = mix(color, filmColor, u_effectMix);
+    gl_FragColor = vec4(finalColor, texel.a);
+}
+</script>
+<script src="./app_2025_0315_1021.js" defer></script>
+<script src="../other/grid.js" defer></script>
+</html>
